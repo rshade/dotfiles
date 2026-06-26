@@ -20,6 +20,18 @@ MISE_BIN="${MISE_INSTALL_PATH:-$HOME/.local/bin/mise}"
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 
+# Temp installer path, removed on any exit. A single EXIT trap (not a per-function
+# RETURN trap) avoids firing against an out-of-scope local; ${VAR:-} keeps it
+# nounset-safe even if we exit before the download.
+INSTALLER_TMP=""
+cleanup() { [ -n "${INSTALLER_TMP:-}" ] && rm -f "$INSTALLER_TMP"; }
+trap cleanup EXIT
+
+# Populated by install_mise (the installer's output) and activate_in_shell (the
+# rc file we touched) so main can reuse them. Guarded with ${VAR:-} at use sites.
+MISE_INSTALL_OUTPUT=""
+RC_FILE=""
+
 # Resolve the mise executable: prefer one already on PATH, fall back to MISE_BIN.
 resolve_mise() {
   if command -v mise >/dev/null 2>&1; then
@@ -41,9 +53,8 @@ install_mise() {
   # The official installer verifies the download checksum/signature itself.
   # Fetch it to a temp file first (auditable, and keeps pipefail meaningful)
   # rather than piping curl straight into sh.
-  local installer
-  installer="$(mktemp)"
-  trap 'rm -f "$installer"' RETURN
+  INSTALLER_TMP="$(mktemp)"
+  local installer="$INSTALLER_TMP"
 
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL https://mise.run -o "$installer"
@@ -55,13 +66,17 @@ install_mise() {
   fi
 
   # MISE_VERSION (if set) is consumed by the official installer to pin a release.
-  sh "$installer"
+  # Capture combined output so we can reuse the activation line it prints (which
+  # may land on stdout or stderr); reprint only the clean `mise:` status lines so
+  # the transient download progress bar doesn't clutter the log.
+  MISE_INSTALL_OUTPUT="$(sh "$installer" 2>&1)"
+  printf '%s\n' "$MISE_INSTALL_OUTPUT" | grep -a '^mise:' || printf '%s\n' "$MISE_INSTALL_OUTPUT"
 }
 
 # Add `mise activate` to the shell rc exactly once. Activation installs shims and
 # keeps tool versions in sync with the directory you're in.
 activate_in_shell() {
-  local mise rc shell_name activate_line
+  local mise rc shell_name activate_line captured
   mise="$(resolve_mise)"
 
   shell_name="$(basename "${SHELL:-bash}")"
@@ -75,10 +90,21 @@ activate_in_shell() {
       ;;
   esac
 
+  # Prefer the exact `eval "$(... activate ...)"` line that `mise install` printed
+  # (it suggests it as `echo "..." >> rc`); strip that wrapper and unescape \" \$.
+  # Fall back to the constructed line above if the output didn't contain it.
+  captured="$(printf '%s\n' "${MISE_INSTALL_OUTPUT:-}" | grep -m1 'mise activate' || true)"
+  if [ -n "$captured" ]; then
+    activate_line="$(printf '%s\n' "$captured" \
+      | sed -e 's/^[[:space:]]*echo "//' -e 's/" >> .*$//' -e 's/\\"/"/g' -e 's/\\\$/$/g')"
+  fi
+
+  RC_FILE="$rc"
   if [ -f "$rc" ] && grep -q "mise activate" "$rc"; then
     log "mise activation already present in $rc"
   else
-    log "Adding mise activation to $rc"
+    log "Adding mise activation to $rc:"
+    log "  $activate_line"
     printf '\n# mise — polyglot tool version manager\n%s\n' "$activate_line" >>"$rc"
   fi
 }
@@ -89,7 +115,11 @@ main() {
   local mise
   mise="$(resolve_mise)"
   log "Done. mise $("$mise" --version)"
-  log "Open a new shell (or 'source' your rc), then run 'mise install' in a project with a mise.toml."
+  log "Run 'mise install' in a project with a mise.toml to provision its tools."
+  if [ -n "${RC_FILE:-}" ]; then
+    log "Activate mise in your CURRENT shell now (so the tools are on PATH):"
+    log "  source $RC_FILE"
+  fi
 }
 
 main "$@"

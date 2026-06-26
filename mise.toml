@@ -39,3 +39,9 @@ run = "gotestsum --format pkgname -- ./..."
 [tasks.fmt]
 description = "Format and tidy imports via golangci-lint"
 run = "golangci-lint fmt"
+
+[tasks.promote-global]
+description = "Copy this project's [tools] into the global mise config (~/.config/mise/config.toml)"
+run = '''
+mise use -g $(awk '/^\[tools\]/{f=1;next} /^\[/{f=0} f&&/=/{sub(/#.*/,"");gsub(/["[:space:]]/,"");if(split($0,a,"=")==2&&a[1]!="")print a[1]"@"a[2]}' "{{config_root}}/mise.toml")
+'''
