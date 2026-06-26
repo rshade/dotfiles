@@ -1,0 +1,41 @@
+# mise.toml — managed Go toolchain for this project.
+# Docs: https://mise.jdx.dev/configuration.html
+#
+# Apply:   mise install      # download/build every tool below
+# Verify:  mise ls           # show resolved versions
+# Run:     mise run lint     # execute a task defined under [tasks.*]
+
+[tools]
+# Language toolchain (backend: core:go). "1.26" tracks the latest 1.26.x patch.
+go = "1.26"
+
+# Linter (backend: aqua:golangci/golangci-lint — checksum-verified binaries).
+# "2.12" tracks the latest 2.12.x patch.
+golangci-lint = "2.12"
+
+# Shell linter (backend: aqua:koalaman/shellcheck). Static binary, no sandbox.
+shellcheck = "0.11"
+
+# Associated Go tooling, installed via `go install` (backend: go:).
+# These depend on the `go` version pinned above, so mise installs them after it.
+"go:golang.org/x/tools/gopls"          = "latest" # language server for editors/LSP
+"go:github.com/go-delve/delve/cmd/dlv" = "latest" # interactive debugger
+"go:gotest.tools/gotestsum"            = "latest" # readable, CI-friendly test output
+# Formatting (gofumpt/goimports) is owned by golangci-lint v2 — see .golangci.yml.
+
+[env]
+# Keep module mode on and cache go-install builds inside the project-local dir
+# so tool builds are reproducible across machines.
+GOFLAGS = "-mod=mod"
+
+[tasks.lint]
+description = "Run golangci-lint across the module"
+run = "golangci-lint run ./..."
+
+[tasks.test]
+description = "Run the test suite with readable output"
+run = "gotestsum --format pkgname -- ./..."
+
+[tasks.fmt]
+description = "Format and tidy imports via golangci-lint"
+run = "golangci-lint fmt"
